@@ -5315,6 +5315,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "uk-bfres"
+version = "0.15.0"
+dependencies = [
+ "indexmap 2.2.6",
+ "log",
+ "roead 1.0.0",
+ "thiserror",
+]
+
+[[package]]
 name = "uk-content"
 version = "0.15.0"
 dependencies = [
@@ -5418,6 +5428,7 @@ dependencies = [
  "smartstring",
  "tempfile",
  "typetag",
+ "uk-bfres",
  "uk-content",
  "uk-reader",
  "uk-util",
