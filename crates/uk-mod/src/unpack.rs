@@ -803,20 +803,29 @@ impl ModUnpacker {
                         res
                     });
 
-                // Validate ResidentActors: warn about entries with no actor pack.
-                if let MergeableResource::ResidentActors(ref residents) = merged {
-                    for (name, _) in residents.0.iter() {
+                // Filter ResidentActors: remove entries whose actor pack doesn't exist
+                // in the game dump. Including them crashes BotW's MainThread during
+                // resident actor pre-loading (memcpy from null).
+                let merged = if let MergeableResource::ResidentActors(residents) = merged {
+                    let valid: Vec<_> = residents.0.into_iter().filter(|(name, _)| {
                         let pack_path = Path::new("Actor/Pack")
                             .join(format!("{}.sbactorpack", name));
-                        if self.dump.get_bytes_uncached(&pack_path).is_err() {
-                            log::error!(
-                                "Resident actor '{}' has no actor pack in the game dump. \
-                                 This will likely crash BotW at runtime during actor pre-loading.",
+                        if self.dump.get_bytes_uncached(&pack_path).is_ok() {
+                            true
+                        } else {
+                            log::warn!(
+                                "Removing resident actor '{}': no actor pack in game dump",
                                 name
                             );
+                            false
                         }
-                    }
-                }
+                    }).collect();
+                    MergeableResource::ResidentActors(Box::new(
+                        uk_content::resource::ResidentActors(valid.into_iter().collect())
+                    ))
+                } else {
+                    merged
+                };
 
                 let data = merged.into_binary(self.endian);
                 // Convert Wii U BFRES files to Switch format when deploying for Switch
