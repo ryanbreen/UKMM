@@ -803,30 +803,6 @@ impl ModUnpacker {
                         res
                     });
 
-                // Filter ResidentActors: remove entries whose actor pack doesn't exist
-                // in the game dump. Including them crashes BotW's MainThread during
-                // resident actor pre-loading (memcpy from null).
-                let merged = if let MergeableResource::ResidentActors(residents) = merged {
-                    let valid: Vec<_> = residents.0.into_iter().filter(|(name, _)| {
-                        let pack_path = Path::new("Actor/Pack")
-                            .join(format!("{}.sbactorpack", name));
-                        if self.dump.get_bytes_uncached(&pack_path).is_ok() {
-                            true
-                        } else {
-                            log::warn!(
-                                "Removing resident actor '{}': no actor pack in game dump",
-                                name
-                            );
-                            false
-                        }
-                    }).collect();
-                    MergeableResource::ResidentActors(Box::new(
-                        uk_content::resource::ResidentActors(valid.into_iter().collect())
-                    ))
-                } else {
-                    merged
-                };
-
                 let data = merged.into_binary(self.endian);
                 // Convert Wii U BFRES files to Switch format when deploying for Switch
                 let data = if self.endian == Endian::Little && uk_bfres::is_wiiu_bfres(&data) {
