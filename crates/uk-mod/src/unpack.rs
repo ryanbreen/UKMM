@@ -802,6 +802,22 @@ impl ModUnpacker {
                         }
                         res
                     });
+
+                // Validate ResidentActors: warn about entries with no actor pack.
+                if let MergeableResource::ResidentActors(ref residents) = merged {
+                    for (name, _) in residents.0.iter() {
+                        let pack_path = Path::new("Actor/Pack")
+                            .join(format!("{}.sbactorpack", name));
+                        if self.dump.get_bytes_uncached(&pack_path).is_err() {
+                            log::error!(
+                                "Resident actor '{}' has no actor pack in the game dump. \
+                                 This will likely crash BotW at runtime during actor pre-loading.",
+                                name
+                            );
+                        }
+                    }
+                }
+
                 let data = merged.into_binary(self.endian);
                 // Convert Wii U BFRES files to Switch format when deploying for Switch
                 let data = if self.endian == Endian::Little && uk_bfres::is_wiiu_bfres(&data) {
