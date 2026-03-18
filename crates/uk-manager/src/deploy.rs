@@ -452,6 +452,104 @@ impl Manager {
         Ok(())
     }
 
+    fn validate_rstb(&self, merged: &Path, platform: Platform) -> Result<()> {
+        static RSTB_PATH: &str = "System/Resource/ResourceSizeTable.product.srsizetable";
+        let content = uk_content::platform_content(platform.into());
+        let table_path = merged.join(content).join(RSTB_PATH);
+        if !table_path.exists() {
+            log::warn!("RSTB file not found at {:?}, skipping validation", table_path);
+            return Ok(());
+        }
+
+        let table = ResourceSizeTable::from_binary(
+            decompress(fs::read(&table_path).context("Failed to read RSTB for validation")?)
+                .context("Failed to decompress RSTB for validation")?,
+        )
+        .context("Failed to parse RSTB for validation")?;
+
+        let content_dir = merged.join(content);
+        let mut mismatches = Vec::new();
+        let mut missing_entries = Vec::new();
+
+        // Walk all deployed files and check their sizes against RSTB
+        fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        walk_dir(&path, files);
+                    } else if path.is_file() {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+        let mut all_files = Vec::new();
+        walk_dir(&content_dir, &mut all_files);
+
+        for path in &all_files {
+            let rel_path = path
+                .strip_prefix(&content_dir)
+                .unwrap_or(path)
+                .to_slash_lossy();
+            let canon = rel_path.to_string();
+
+            // Skip the RSTB file itself and non-resource files
+            if canon == RSTB_PATH || canon.ends_with(".json") || canon.ends_with(".yml") {
+                continue;
+            }
+
+            if let Some(rstb_size) = table.get(&*canon) {
+                // Check if the deployed file is larger than the RSTB entry
+                let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) as u32;
+                if file_size > rstb_size {
+                    mismatches.push((canon, file_size, rstb_size));
+                }
+            } else {
+                // File exists but has no RSTB entry — BotW may use a default allocation
+                missing_entries.push(canon);
+            }
+        }
+
+        if !mismatches.is_empty() {
+            log::error!(
+                "RSTB SIZE MISMATCHES FOUND — {} file(s) are larger than their RSTB entries. \
+                 This will cause heap corruption and crashes in BotW:",
+                mismatches.len()
+            );
+            for (path, actual, rstb) in &mismatches {
+                log::error!(
+                    "  {} : deployed={} bytes, RSTB={} bytes (deficit: {} bytes)",
+                    path,
+                    actual,
+                    rstb,
+                    actual - rstb
+                );
+            }
+        }
+
+        if !missing_entries.is_empty() && missing_entries.len() < 50 {
+            log::warn!(
+                "{} deployed file(s) have no RSTB entry (BotW will use default allocation):",
+                missing_entries.len()
+            );
+            for path in &missing_entries {
+                log::warn!("  {}", path);
+            }
+        } else if !missing_entries.is_empty() {
+            log::warn!(
+                "{} deployed file(s) have no RSTB entry (BotW will use default allocation)",
+                missing_entries.len()
+            );
+        }
+
+        if mismatches.is_empty() {
+            log::info!("RSTB validation passed: all deployed files fit their RSTB allocations");
+        }
+
+        Ok(())
+    }
+
     pub fn apply(&self, manifest: Option<Manifest>) -> Result<()> {
         let mod_manager = self
             .mod_manager
@@ -520,8 +618,9 @@ impl Manager {
         log::info!("Applying changes");
         let rstb_updates = unpacker.unpack()?;
         self.apply_rstb(&out_dir, settings.current_mode, rstb_updates)?;
+        self.validate_rstb(&out_dir, settings.current_mode)?;
         self.save()?;
-        log::info!("All changed applied successfully");
+        log::info!("All changes applied successfully");
         Ok(())
     }
 }
